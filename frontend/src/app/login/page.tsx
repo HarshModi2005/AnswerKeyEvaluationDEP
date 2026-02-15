@@ -2,29 +2,54 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { User, ShieldCheck, GraduationCap, ArrowRight, Loader2 } from "lucide-react";
+import { Lock, Mail, ShieldCheck, GraduationCap, ArrowRight, Loader2, AlertCircle, UserPlus } from "lucide-react";
+
+import api from "@/lib/api";
+import Link from "next/link";
+
 
 export default function LoginPage() {
   const router = useRouter();
   const [role, setRole] = useState<"ta" | "student">("student");
   const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [formData, setFormData] = useState({
-    name: "",
     email: "",
+    password: "",
   });
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
+    setError(null);
 
-    // Simulate a brief delay for a premium feel
-    setTimeout(() => {
-      if (role === "ta") {
+    try {
+      // Call the backend login endpoint
+      const response = await api.post("/auth/login", {
+        email: formData.email,
+        password: formData.password
+      });
+
+      const user = response.data.user;
+
+      // Verify if the role matches the one selected (Optional but good for UX)
+      if (user.role !== role) {
+        // If you want to enforce role selection match
+        // But for now, let's just redirect based on what the server says the user is
+      }
+
+      // Redirect based on server-returned role
+      if (user.role === "ta") {
         router.push("/admin/dashboard");
       } else {
         router.push("/student/dashboard");
       }
-    }, 1200);
+    } catch (err: any) {
+      console.error("Login failed:", err);
+      setError(err.response?.data?.detail || "Invalid email or password. Please try again.");
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (
@@ -42,10 +67,17 @@ export default function LoginPage() {
             <h1 className="text-4xl font-black text-white tracking-tight mb-2">
               AutoEval
             </h1>
-            <p className="text-indigo-100/80 font-medium">
+            <p className="text-indigo-100/80 font-medium text-sm">
               Intelligent Answer Sheet Evaluation
             </p>
           </div>
+
+          {error && (
+            <div className="mb-6 p-4 bg-red-500/20 shadow-lg border border-red-500/30 rounded-xl flex items-center gap-3 text-white text-sm font-medium animate-in fade-in slide-in-from-top-2">
+              <AlertCircle className="w-5 h-5 shrink-0" />
+              <p>{error}</p>
+            </div>
+          )}
 
           <form onSubmit={handleLogin} className="space-y-6">
             {/* Role Selection */}
@@ -53,51 +85,50 @@ export default function LoginPage() {
               <button
                 type="button"
                 onClick={() => setRole("student")}
-                className={`flex flex-col items-center justify-center p-4 rounded-2xl border-2 transition-all gap-2 ${
-                  role === "student"
-                    ? "bg-white/20 border-white text-white shadow-lg shadow-white/10"
-                    : "bg-white/5 border-transparent text-white/60 hover:bg-white/10"
-                }`}
+                className={`flex flex-col items-center justify-center p-4 rounded-2xl border-2 transition-all gap-2 ${role === "student"
+                  ? "bg-white/20 border-white text-white shadow-lg shadow-white/10"
+                  : "bg-white/5 border-transparent text-white/60 hover:bg-white/10"
+                  }`}
               >
                 <GraduationCap className={`w-8 h-8 ${role === "student" ? "animate-bounce" : ""}`} />
-                <span className="text-sm font-bold uppercase tracking-wider">Student</span>
+                <span className="text-xs font-bold uppercase tracking-wider">Student</span>
               </button>
               <button
                 type="button"
                 onClick={() => setRole("ta")}
-                className={`flex flex-col items-center justify-center p-4 rounded-2xl border-2 transition-all gap-2 ${
-                  role === "ta"
-                    ? "bg-white/20 border-white text-white shadow-lg shadow-white/10"
-                    : "bg-white/5 border-transparent text-white/60 hover:bg-white/10"
-                }`}
+                className={`flex flex-col items-center justify-center p-4 rounded-2xl border-2 transition-all gap-2 ${role === "ta"
+                  ? "bg-white/20 border-white text-white shadow-lg shadow-white/10"
+                  : "bg-white/5 border-transparent text-white/60 hover:bg-white/10"
+                  }`}
               >
                 <ShieldCheck className={`w-8 h-8 ${role === "ta" ? "animate-bounce" : ""}`} />
-                <span className="text-sm font-bold uppercase tracking-wider">TA / Faculty</span>
+                <span className="text-xs font-bold uppercase tracking-wider">TA / Faculty</span>
               </button>
             </div>
 
             {/* Input Fields */}
             <div className="space-y-4">
               <div className="relative group">
-                <User className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-white/60 group-focus-within:text-white transition-colors" />
-                <input
-                  type="text"
-                  required
-                  placeholder="Full Name"
-                  className="w-full bg-white/10 border border-white/20 rounded-xl py-4 pl-12 pr-4 text-white placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-white/30 focus:bg-white/20 transition-all font-medium"
-                  value={formData.name}
-                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                />
-              </div>
-
-              <div className="relative group">
+                <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-white/60 group-focus-within:text-white transition-colors" />
                 <input
                   type="email"
                   required
                   placeholder="University Email"
-                  className="w-full bg-white/10 border border-white/20 rounded-xl py-4 px-4 text-white placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-white/30 focus:bg-white/20 transition-all font-medium"
+                  className="w-full bg-white/10 border border-white/20 rounded-xl py-4 pl-12 pr-4 text-white placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-white/30 focus:bg-white/20 transition-all font-medium"
                   value={formData.email}
                   onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                />
+              </div>
+
+              <div className="relative group">
+                <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-white/60 group-focus-within:text-white transition-colors" />
+                <input
+                  type="password"
+                  required
+                  placeholder="Password"
+                  className="w-full bg-white/10 border border-white/20 rounded-xl py-4 pl-12 pr-4 text-white placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-white/30 focus:bg-white/20 transition-all font-medium"
+                  value={formData.password}
+                  onChange={(e) => setFormData({ ...formData, password: e.target.value })}
                 />
               </div>
             </div>
@@ -119,9 +150,15 @@ export default function LoginPage() {
           </form>
 
           <div className="mt-8 text-center border-t border-white/10 pt-6">
-            <p className="text-white/50 text-xs font-bold uppercase tracking-widest">
-              Powered by Advanced AI
+            <p className="text-white/60 text-sm font-medium mb-2">
+              Don't have an account?
             </p>
+            <Link
+              href="/signup"
+              className="text-white font-bold hover:text-indigo-200 transition-colors flex items-center justify-center gap-2 group"
+            >
+              Create Account <UserPlus className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
+            </Link>
           </div>
         </div>
       </div>

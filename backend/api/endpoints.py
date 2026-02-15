@@ -9,6 +9,7 @@ from models import (
     Student, Submission, EvaluationResult,
     AnswerKey, StudentResult, PipelineSummary, SheetUpdateSummary,
     ProcessFolderRequest, ExportToSheetsRequest, FullPipelineRequest,
+    User, UserRole, LoginRequest, RegisterRequest,
 )
 from services.drive_service import DriveService
 from services.ocr_service import OCRService
@@ -39,6 +40,8 @@ sheets_service = SheetsService()
 _current_answer_key: Optional[AnswerKey] = None
 # Scored results from the latest pipeline run
 _current_results: list[StudentResult] = []
+# Simple in-memory session for mock auth
+_current_user: Optional[User] = None
 
 
 # ═══════════════════════════════════════
@@ -52,7 +55,87 @@ def get_status():
         "answer_key_loaded": _current_answer_key is not None,
         "answer_key_questions": _current_answer_key.total_questions if _current_answer_key else 0,
         "results_count": len(_current_results),
+        "user_logged_in": _current_user is not None,
     }
+
+
+# ═══════════════════════════════════════
+#  AUTHENTICATION
+# ═══════════════════════════════════════
+
+@router.post("/auth/register")
+def register(request: RegisterRequest):
+    """Register a new user."""
+    print(f"DEBUG: Registering user: {request.email} with role: {request.role}")
+    try:
+        existing = db.get_user_by_email(request.email)
+        if existing:
+            print(f"DEBUG: User already exists: {request.email}")
+            raise HTTPException(status_code=400, detail="User already exists")
+        
+        user = User(
+            id=str(uuid.uuid4()),
+            email=request.email,
+            password=request.password,
+            role=request.role
+        )
+        db.create_user(user)
+        print(f"DEBUG: User created successfully: {request.email}")
+        return {"message": "User registered successfully"}
+    except Exception as e:
+        print(f"DEBUG: Error during registration: {str(e)}")
+        if isinstance(e, HTTPException):
+            raise e
+        raise HTTPException(status_code=500, detail=f"Internal Server Error: {str(e)}")
+
+
+@router.post("/auth/login")
+def login(request: LoginRequest):
+    """Login a user and set the session."""
+    global _current_user
+    print(f"DEBUG: Login attempt for email: {request.email}")
+    user_data = db.get_user_by_email(request.email)
+    
+    if not user_data:
+        print(f"DEBUG: User not found: {request.email}")
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+    
+    # Debug print for password comparison
+    print(f"DEBUG: comparing '{user_data['password']}' with '{request.password}'")
+    
+    if user_data["password"] != request.password:
+        print(f"DEBUG: Password mismatch for user: {request.email}")
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+    
+    _current_user = User(**user_data)
+    print(f"DEBUG: Login successful for {request.email}")
+
+    return {
+        "message": "Login successful",
+        "user": {
+            "email": _current_user.email,
+            "role": _current_user.role
+        }
+    }
+
+
+@router.get("/auth/me")
+def get_me():
+    """Verify session and return current user."""
+    if not _current_user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return {
+        "email": _current_user.email,
+        "role": _current_user.role
+    }
+
+
+@router.post("/auth/logout")
+def logout():
+    """Clear the session."""
+    global _current_user
+    _current_user = None
+    return {"message": "Logged out successfully"}
 
 
 # ═══════════════════════════════════════

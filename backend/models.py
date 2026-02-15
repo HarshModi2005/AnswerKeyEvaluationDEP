@@ -1,5 +1,32 @@
+from enum import Enum
 from pydantic import BaseModel
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Any
+
+# ── Authentication Models ──
+
+class UserRole(str, Enum):
+    TA = "ta"
+    STUDENT = "student"
+
+
+class User(BaseModel):
+    id: str
+    email: str
+    password: str
+    role: UserRole
+
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+class RegisterRequest(BaseModel):
+    email: str
+    password: str
+    role: UserRole
+
+
 
 
 # ── Existing Models ──

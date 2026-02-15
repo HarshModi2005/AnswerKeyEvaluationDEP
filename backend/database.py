@@ -1,6 +1,6 @@
 import sqlite3
 import json
-from models import Student, Submission, EvaluationResult
+from models import Student, Submission, EvaluationResult, User
 
 class Database:
     def __init__(self, db_path="evaluation.db"):
@@ -17,6 +17,8 @@ class Database:
                       extracted_data TEXT)''')
         c.execute('''CREATE TABLE IF NOT EXISTS results
                      (submission_id TEXT PRIMARY KEY, score REAL, feedback TEXT, details TEXT)''')
+        c.execute('''CREATE TABLE IF NOT EXISTS users
+                     (id TEXT PRIMARY KEY, email TEXT UNIQUE, password TEXT, role TEXT)''')
         conn.commit()
         conn.close()
 
@@ -65,6 +67,24 @@ class Database:
         conn.row_factory = sqlite3.Row
         c = conn.cursor()
         c.execute("SELECT * FROM submissions WHERE id = ?", (submission_id,))
+        row = c.fetchone()
+        conn.close()
+        return dict(row) if row else None
+
+    def create_user(self, user: User):
+        conn = sqlite3.connect(self.db_path)
+        c = conn.cursor()
+        c.execute("INSERT OR REPLACE INTO users VALUES (?, ?, ?, ?)",
+                  (user.id, user.email, user.password, user.role))
+
+        conn.commit()
+        conn.close()
+
+    def get_user_by_email(self, email: str):
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        c = conn.cursor()
+        c.execute("SELECT * FROM users WHERE email = ?", (email,))
         row = c.fetchone()
         conn.close()
         return dict(row) if row else None

@@ -12,7 +12,8 @@ class OCRService:
         self.vertex_api_key = api_key or os.getenv("VERTEX_AI_API_KEY")
         
         if not self.vertex_api_key:
-            raise ValueError("VERTEX_AI_API_KEY not found in environment variables")
+            print("⚠️ WARNING: VERTEX_AI_API_KEY not found. OCR features will be disabled.")
+
         
         self.vertex_url = f"https://aiplatform.googleapis.com/v1/publishers/google/models/gemini-2.5-flash-lite:streamGenerateContent?key={self.vertex_api_key}"
         
