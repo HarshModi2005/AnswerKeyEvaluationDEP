@@ -358,6 +358,7 @@ def export_to_sheets(request: ExportToSheetsRequest):
                 "entry_number": r.entry_number,
                 "name": r.name,
                 "total_score": r.total_score,
+                "comments": r.comments,  # Pass comments to sheet
             }
             for r in _current_results
         ]
@@ -384,6 +385,7 @@ def export_to_sheets(request: ExportToSheetsRequest):
                         "entry_number": entry,
                         "name": name,
                         "total_score": score,
+                        "comments": row.get("feedback", ""), 
                     })
 
     if not results_dicts:

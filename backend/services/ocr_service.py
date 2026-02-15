@@ -229,7 +229,8 @@ Extract ONLY the following fields and return as valid JSON (no markdown):
         "2": "C",
         "3": "B",
         ...
-    }
+    },
+    "comments": "Any observations about the sheet: e.g. 'Damage on corner', 'Q5 ambiguous', 'Name unclear', 'Erasures detected'. If clean, return null."
 }
 
 Rules:
@@ -250,6 +251,7 @@ Return ONLY valid JSON, no explanation, no markdown.
         result = {
             "entry_number": parsed.get("entry_number") or parsed.get("roll_number") or "unknown",
             "name": parsed.get("name") or parsed.get("student_name") or "unknown",
+            "comments": parsed.get("comments") or "",
             "answers": {}
         }
 

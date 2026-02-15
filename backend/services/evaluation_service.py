@@ -19,31 +19,33 @@ class EvaluationService:
         """
         Pure function — matches student answers against the answer key and returns a score.
         
-        No LLM involved. Just dictionary matching.
-        
         Args:
-            answer_key: AnswerKey model with .answers dict {q_num: AnswerKeyEntry}
+            answer_key: AnswerKey model.
             student_answers: Dict from OCR extraction:
                 {
-                    "entry_number": "2023CSE001",
-                    "name": "Harsh",
-                    "answers": {1: "A", 2: "B", ...}   (or {"1": "A", "2": "B", ...})
+                    "entry_number": "...",
+                    "name": "...",
+                    "answers": {1: "A", ...},
+                    "comments": "erasure on Q5"  (optional)
                 }
-        
-        Returns:
-            StudentResult with full score breakdown.
         """
         entry_number = str(student_answers.get("entry_number", "unknown")).strip()
         name = str(student_answers.get("name", "unknown")).strip()
         raw_answers = student_answers.get("answers", {})
+        
+        # Aggregate comments
+        comments_list = []
+        if student_answers.get("comments"):
+            c = str(student_answers["comments"]).strip()
+            if c and c.lower() != "none" and c.lower() != "null":
+                comments_list.append(c)
 
-        # Normalize student answers: ensure keys are ints, values are uppercase strings
+        # Normalize student answers
         student_ans = {}
         for k, v in raw_answers.items():
             try:
                 q_num = int(k)
                 option = str(v).strip().upper()
-                # Clean up "OPTION A" → "A"
                 if "OPTION" in option:
                     option = option.replace("OPTION", "").strip()
                 student_ans[q_num] = option
@@ -58,6 +60,7 @@ class EvaluationService:
         negative_deduction = 0.0
         details = []
 
+        # Iterate strictly over answer key questions
         for q_num, key_entry in answer_key.answers.items():
             correct_option = key_entry.correct_option.strip().upper()
             marks = key_entry.marks
@@ -67,7 +70,7 @@ class EvaluationService:
                 marked = student_ans[q_num]
 
                 if marked == "MULTIPLE":
-                    # Multiple options marked — treat as incorrect
+                    # Multiple options marked -> Incorrect
                     incorrect_count += 1
                     neg = answer_key.negative_marking
                     negative_deduction += neg
@@ -79,6 +82,8 @@ class EvaluationService:
                         result="multiple",
                         score=-neg
                     ))
+                    comments_list.append(f"Q{q_num}: Multiple marks")
+                
                 elif marked == correct_option:
                     correct_count += 1
                     total_score += marks
@@ -89,6 +94,7 @@ class EvaluationService:
                         result="correct",
                         score=marks
                     ))
+                
                 else:
                     incorrect_count += 1
                     neg = answer_key.negative_marking
@@ -117,13 +123,14 @@ class EvaluationService:
         return StudentResult(
             entry_number=entry_number,
             name=name,
-            total_score=max(total_score, 0),  # floor at 0
+            total_score=max(total_score, 0),
             max_score=max_score,
             correct_count=correct_count,
             incorrect_count=incorrect_count,
             unattempted_count=unattempted_count,
             negative_deduction=negative_deduction,
-            details=details
+            details=details,
+            comments="; ".join(comments_list)
         )
 
     def __init__(self, api_key: str = None, provider: str = None):

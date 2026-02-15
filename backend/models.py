@@ -58,6 +58,7 @@ class StudentResult(BaseModel):
     unattempted_count: int
     negative_deduction: float = 0.0
     details: List[QuestionResult] = []
+    comments: str = ""
 
 
 # ── API Request/Response Models ──
