@@ -16,6 +16,7 @@ export default function SignupPage() {
         email: "",
         password: "",
         confirmPassword: "",
+        rollNumber: "",
     });
 
     const handleSignup = async (e: React.FormEvent) => {
@@ -33,7 +34,8 @@ export default function SignupPage() {
             await api.post("/auth/register", {
                 email: formData.email,
                 password: formData.password,
-                role: role
+                role: role,
+                roll_number: role === "student" ? formData.rollNumber : null
             });
 
             setSuccess(true);
@@ -147,6 +149,23 @@ export default function SignupPage() {
                                 />
                             </div>
                         </div>
+
+                        {/* Entry Number (Only for Students) */}
+                        {role === "student" && (
+                            <div className="space-y-4 animate-in fade-in slide-in-from-top-2 duration-300">
+                                <div className="relative group">
+                                    <GraduationCap className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-white/60 group-focus-within:text-white transition-colors" />
+                                    <input
+                                        type="text"
+                                        required={role === "student"}
+                                        placeholder="Entry Number (e.g. 2023CSB1122)"
+                                        className="w-full bg-white/10 border border-white/20 rounded-xl py-4 pl-12 pr-4 text-white placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-white/30 focus:bg-white/20 transition-all font-medium"
+                                        value={formData.rollNumber}
+                                        onChange={(e) => setFormData({ ...formData, rollNumber: e.target.value })}
+                                    />
+                                </div>
+                            </div>
+                        )}
 
                         {/* Submit Button */}
                         <button

@@ -14,6 +14,7 @@ class User(BaseModel):
     email: str
     password: str
     role: UserRole
+    roll_number: Optional[str] = None
 
 
 class LoginRequest(BaseModel):
@@ -25,6 +26,7 @@ class RegisterRequest(BaseModel):
     email: str
     password: str
     role: UserRole
+    roll_number: Optional[str] = None
 
 
 

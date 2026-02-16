@@ -23,6 +23,9 @@ import json
 import tempfile
 import shutil
 from typing import Optional
+from passlib.context import CryptContext
+
+pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
 
 router = APIRouter()
 db = Database()
@@ -68,6 +71,10 @@ def register(request: RegisterRequest):
     """Register a new user."""
     print(f"DEBUG: Registering user: {request.email} with role: {request.role}")
     try:
+        if request.role == UserRole.STUDENT and not request.roll_number:
+            print(f"DEBUG: Roll number required for student: {request.email}")
+            raise HTTPException(status_code=400, detail="Roll number is required for students")
+
         existing = db.get_user_by_email(request.email)
         if existing:
             print(f"DEBUG: User already exists: {request.email}")
@@ -76,8 +83,9 @@ def register(request: RegisterRequest):
         user = User(
             id=str(uuid.uuid4()),
             email=request.email,
-            password=request.password,
-            role=request.role
+            password=pwd_context.hash(request.password),
+            role=request.role,
+            roll_number=request.roll_number
         )
         db.create_user(user)
         print(f"DEBUG: User created successfully: {request.email}")
@@ -100,10 +108,10 @@ def login(request: LoginRequest):
         print(f"DEBUG: User not found: {request.email}")
         raise HTTPException(status_code=401, detail="Invalid credentials")
     
-    # Debug print for password comparison
-    print(f"DEBUG: comparing '{user_data['password']}' with '{request.password}'")
+    # Debug print for password comparison (Safe version)
+    print(f"DEBUG: verifying password for {request.email}")
     
-    if user_data["password"] != request.password:
+    if not pwd_context.verify(request.password, user_data["password"]):
         print(f"DEBUG: Password mismatch for user: {request.email}")
         raise HTTPException(status_code=401, detail="Invalid credentials")
     

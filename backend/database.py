@@ -18,7 +18,15 @@ class Database:
         c.execute('''CREATE TABLE IF NOT EXISTS results
                      (submission_id TEXT PRIMARY KEY, score REAL, feedback TEXT, details TEXT)''')
         c.execute('''CREATE TABLE IF NOT EXISTS users
-                     (id TEXT PRIMARY KEY, email TEXT UNIQUE, password TEXT, role TEXT)''')
+                     (id TEXT PRIMARY KEY, email TEXT UNIQUE, password TEXT, role TEXT, roll_number TEXT)''')
+        
+        # Migration: Add roll_number column to users if it doesn't exist
+        try:
+            c.execute("ALTER TABLE users ADD COLUMN roll_number TEXT")
+        except sqlite3.OperationalError:
+            # Column already exists
+            pass
+            
         conn.commit()
         conn.close()
 
@@ -74,8 +82,8 @@ class Database:
     def create_user(self, user: User):
         conn = sqlite3.connect(self.db_path)
         c = conn.cursor()
-        c.execute("INSERT OR REPLACE INTO users VALUES (?, ?, ?, ?)",
-                  (user.id, user.email, user.password, user.role))
+        c.execute("INSERT OR REPLACE INTO users VALUES (?, ?, ?, ?, ?)",
+                  (user.id, user.email, user.password, user.role, user.roll_number))
 
         conn.commit()
         conn.close()
