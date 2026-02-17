@@ -17,10 +17,12 @@ export default function StudentDashboard() {
     const handleLogout = async () => {
         try {
             await api.post('/auth/logout');
-            router.push('/login');
         } catch (error) {
             console.error("Logout failed:", error);
-            // Fallback redirect if backend fails
+        } finally {
+            // Always clear localStorage and redirect
+            localStorage.removeItem('token');
+            localStorage.removeItem('user');
             router.push('/login');
         }
     };

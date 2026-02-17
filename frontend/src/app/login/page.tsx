@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Lock, Mail, ShieldCheck, GraduationCap, ArrowRight, Loader2, AlertCircle, UserPlus } from "lucide-react";
 
@@ -18,6 +18,25 @@ export default function LoginPage() {
     password: "",
   });
 
+  // Check for existing session
+  useEffect(() => {
+    const token = localStorage.getItem("token");
+    const userJson = localStorage.getItem("user");
+    if (token && userJson) {
+      try {
+        const user = JSON.parse(userJson);
+        if (user.role === "ta") {
+          router.push("/admin/dashboard");
+        } else {
+          router.push("/student/dashboard");
+        }
+      } catch (e) {
+        console.error("Failed to parse stored user", e);
+        localStorage.clear();
+      }
+    }
+  }, [router]);
+
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
@@ -30,13 +49,11 @@ export default function LoginPage() {
         password: formData.password
       });
 
-      const user = response.data.user;
+      const { user, token } = response.data;
 
-      // Verify if the role matches the one selected (Optional but good for UX)
-      if (user.role !== role) {
-        // If you want to enforce role selection match
-        // But for now, let's just redirect based on what the server says the user is
-      }
+      // Store in localStorage for session persistence
+      localStorage.setItem("token", token);
+      localStorage.setItem("user", JSON.stringify(user));
 
       // Redirect based on server-returned role
       if (user.role === "ta") {

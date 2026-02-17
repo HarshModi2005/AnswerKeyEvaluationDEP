@@ -16,9 +16,12 @@ export default function AdminDashboard() {
     const handleLogout = async () => {
         try {
             await api.post('/auth/logout');
-            router.push('/login');
         } catch (error) {
             console.error("Logout failed:", error);
+        } finally {
+            // Always clear localStorage and redirect
+            localStorage.removeItem('token');
+            localStorage.removeItem('user');
             router.push('/login');
         }
     };
