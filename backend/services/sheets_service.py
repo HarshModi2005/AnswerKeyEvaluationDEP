@@ -5,13 +5,14 @@ Reads student lists from Google Sheets and writes marks back.
 Entry numbers are matched using the pattern yyyyBBBnnnn (e.g. 2023CSB1122).
 Names are cross-verified — mismatches are flagged but marks are still written.
 Supports writing 'comments' if a column is present.
+Supports writing per-question marks if columns like '1', 'Q1', '2', 'Q2' are present.
 """
 
 import os
 import re
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional, Tuple, Any
 
 
 class SheetsService:
@@ -48,6 +49,14 @@ class SheetsService:
     ENTRY_NUMBER_PATTERN = re.compile(
         r'(\d{4})\s*([A-Za-z]{2,4})\s*(\d{2,5})',
     )
+    
+    # Regex for question columns: "1", "Q1", "Q 1", "Question 1", "1a" (if simple digit)
+    # We will support simple integers for now as per current pipeline.
+    # Regex for question columns: 1, Q1, Q.1, Q-1, Question 1
+    QUESTION_COLUMN_PATTERN = re.compile(
+        r'^(?:q|ques|question)?[\s\.\-\_]*(\d+)$', 
+        re.IGNORECASE
+    )
 
     def __init__(self, credentials_path: str = "credentials.json"):
         self.creds = None
@@ -79,28 +88,13 @@ class SheetsService:
     def parse_sheet_url(url: str) -> Tuple[str, Optional[str]]:
         """
         Extract spreadsheet ID and optional sheet name/GID from URL.
-        
-        Handles:
-        - https://docs.google.com/spreadsheets/d/SPREADSHEET_ID/edit
-        - https://docs.google.com/spreadsheets/d/SPREADSHEET_ID/edit#gid=0
-        - https://docs.google.com/spreadsheets/d/SPREADSHEET_ID/edit?usp=sharing
-        
-        Returns:
-            (spreadsheet_id, sheet_name_or_none)
         """
         spreadsheet_id = url
         sheet_name = None
 
-        # Extract spreadsheet ID from URL
         match = re.search(r'/spreadsheets/d/([a-zA-Z0-9-_]+)', url)
         if match:
             spreadsheet_id = match.group(1)
-
-        # Try to extract gid for specific sheet
-        gid_match = re.search(r'[#&?]gid=(\d+)', url)
-        if gid_match:
-            # We'll resolve gid to sheet name later if needed
-            pass
 
         return spreadsheet_id, sheet_name
 
@@ -110,20 +104,11 @@ class SheetsService:
 
     @classmethod
     def _normalize_entry_number(cls, raw: str) -> Optional[str]:
-        """
-        Normalize an entry number to the canonical format: YYYYBBBNNNN (uppercase).
-        
-        E.g. '2023csb1122' → '2023CSB1122'
-             '2023-CSB-1122' → '2023CSB1122'
-             '2023 CSB 1122' → '2023CSB1122'
-             'unknown' → None
-        """
+        """Normalize to YYYYBBBNNNN."""
         if not raw or raw.lower() in ('unknown', 'none', 'n/a', ''):
             return None
 
         clean = raw.strip()
-
-        # Try to match the pattern
         m = cls.ENTRY_NUMBER_PATTERN.search(clean)
         if m:
             year = m.group(1)
@@ -131,11 +116,9 @@ class SheetsService:
             number = m.group(3)
             return f"{year}{branch}{number}"
 
-        # Fallback: just uppercase and strip spaces/hyphens
         fallback = re.sub(r'[\s\-_./]', '', clean).upper()
         if len(fallback) >= 6:
             return fallback
-
         return None
 
     # ──────────────────────────────────────
@@ -143,18 +126,10 @@ class SheetsService:
     # ──────────────────────────────────────
 
     @staticmethod
-    def _check_name_mismatch(
-        sheet_name: str,
-        ocr_name: str,
-        entry_number: str,
-        row: int
-    ) -> Optional[str]:
-        """
-        Cross-verify names from the sheet and OCR.
-        Returns a mismatch message string if names don't match, None otherwise.
-        """
+    def _check_name_mismatch(sheet_name: str, ocr_name: str, entry_number: str, row: int) -> Optional[str]:
+        """Returns mismatch message string if names don't match."""
         if not sheet_name or not ocr_name:
-            return None  # Can't verify, skip
+            return None
 
         s = sheet_name.strip().lower()
         o = ocr_name.strip().lower()
@@ -162,29 +137,19 @@ class SheetsService:
         if not s or not o or s == 'unknown' or o == 'unknown':
             return None
 
-        # 1. Exact match
-        if s == o:
-            return None
-
-        # 2. Shared words (first name / last name overlap)
+        if s == o: return None
+        
         s_parts = set(s.split())
         o_parts = set(o.split())
-        if s_parts.intersection(o_parts):
-            return None
+        if s_parts.intersection(o_parts): return None
 
-        # 3. Substring check (OCR might get partial name)
-        if s in o or o in s:
-            return None
+        if s in o or o in s: return None
 
-        # 4. Check if any individual word from one appears in the other string
         for word in s_parts:
-            if len(word) >= 3 and word in o:
-                return None
+            if len(word) >= 3 and word in o: return None
         for word in o_parts:
-            if len(word) >= 3 and word in s:
-                return None
+            if len(word) >= 3 and word in s: return None
 
-        # Mismatch
         return f"Name mismatch: Sheet='{sheet_name}' vs OCR='{ocr_name}'"
 
     # ──────────────────────────────────────
@@ -192,30 +157,12 @@ class SheetsService:
     # ──────────────────────────────────────
 
     def read_student_list(self, sheet_url: str) -> Dict:
-        """
-        Read the student list from a Google Sheet.
-        
-        Auto-detects columns for entry number, name, marks, and now COMMENTS.
-        
-        Returns:
-            {
-                "spreadsheet_id": "...",
-                "sheet_name": "Sheet1",
-                "columns": {
-                    "entry_number": {...},
-                    "name": {...},
-                    "marks": {...},
-                    "comments": {...}
-                },
-                "students": [...]
-            }
-        """
+        """Read the student list and detect columns."""
         if not self.service:
             raise RuntimeError("Sheets service not initialized. Check credentials.")
 
         spreadsheet_id, sheet_name = self.parse_sheet_url(sheet_url)
 
-        # Get spreadsheet metadata to find sheet names
         spreadsheet = self.service.spreadsheets().get(
             spreadsheetId=spreadsheet_id
         ).execute()
@@ -224,11 +171,9 @@ class SheetsService:
         if not sheets:
             raise ValueError("Spreadsheet has no sheets")
 
-        # Use first sheet if no specific sheet specified
         if not sheet_name:
             sheet_name = sheets[0]['properties']['title']
 
-        # Read all data
         range_name = f"'{sheet_name}'"
         result = self.service.spreadsheets().values().get(
             spreadsheetId=spreadsheet_id,
@@ -237,34 +182,28 @@ class SheetsService:
 
         values = result.get('values', [])
         if not values or len(values) < 2:
-            raise ValueError("Sheet is empty or has no data rows (need at least header + 1 row)")
+            raise ValueError("Sheet is empty or has no data rows")
 
-        # Detect columns from header
         headers = values[0]
         columns = self._detect_columns(headers)
 
         if not columns.get('entry_number'):
             raise ValueError(
-                f"Could not detect entry number column. "
-                f"Headers found: {headers}. "
+                f"Could not detect entry number column. Headers: {headers}. "
                 f"Expected one of: {self.ENTRY_NUMBER_ALIASES}"
             )
 
-        # Parse student rows
         students = []
         entry_col = columns['entry_number']['index']
         name_col = columns.get('name', {}).get('index')
-        marks_col = columns.get('marks', {}).get('index')
         comments_col = columns.get('comments', {}).get('index')
 
-        for row_idx, row in enumerate(values[1:], start=2):  # 1-indexed, skip header
+        for row_idx, row in enumerate(values[1:], start=2):
             entry_number = self._safe_get(row, entry_col, '').strip()
             if not entry_number:
-                continue  # Skip empty rows
+                continue
 
             name = self._safe_get(row, name_col, '').strip() if name_col is not None else ''
-            
-            # Read existing marks/comments strictly for awareness, not logic dependent
             existing_comment = self._safe_get(row, comments_col, '') if comments_col is not None else ''
 
             students.append({
@@ -287,12 +226,7 @@ class SheetsService:
 
     def update_marks(self, sheet_url: str, results: List[Dict]) -> Dict:
         """
-        Match evaluated results to students by entry_number and write marks + comments.
-        
-        Args:
-            sheet_url: Google Sheets URL.
-            results: List of dicts with:
-                {"entry_number": "...", "total_score": float, "name": "...", "comments": "opt..."}
+        Write marks, comments, AND per-question scores.
         """
         if not self.service:
             raise RuntimeError("Sheets service not initialized. Check credentials.")
@@ -304,19 +238,15 @@ class SheetsService:
         columns = sheet_data['columns']
         students = sheet_data['students']
 
+        # Check required columns
         if not columns.get('marks'):
-            raise ValueError(
-                "No 'marks' column detected in the sheet. "
-                "Please add a column header like 'Marks', 'Score', or 'Total'."
-            )
+            raise ValueError("No 'marks' column detected.")
 
         marks_col_letter = columns['marks']['letter']
         comments_col_letter = columns.get('comments', {}).get('letter')
+        question_cols = columns.get('questions', {}) # Dict[int, Dict] {1: {index, letter}, ...}
 
-        if not comments_col_letter:
-            print("⚠️  No 'comments' column detected. Only marks will be written.")
-
-        # Build lookup: normalized_entry → result
+        # Build lookup
         results_map = {}
         for r in results:
             raw = str(r.get('entry_number', '')).strip()
@@ -335,78 +265,176 @@ class SheetsService:
         batch_data = []
         matched_normalized = set()
 
+        # DEBUG
+        print(f"DEBUG: Results Map Keys: {list(results_map.keys())}")
+
         for student in students:
             raw_entry = student['entry_number']
             normalized = self._normalize_entry_number(raw_entry)
+            
+            # DEBUG
+            # print(f"DEBUG: Sheet Row {student['row']}: '{raw_entry}' -> Normalized: '{normalized}'")
 
             if not normalized:
                 continue
 
+            # 1. Try Entry Number Match
             if normalized in results_map:
                 matched_normalized.add(normalized)
                 result = results_map[normalized]
-                score = result.get('total_score', 0)
-                
-                # Compose comment
-                final_comments = []
-                
-                # Add OCR comments (e.g. "erasure", "question 3 multiple marks")
-                ocr_comment = result.get('comments', '')
-                if ocr_comment:
-                    final_comments.append(ocr_comment)
-
-                # Cross-verify name mismatch
-                mismatch_msg = self._check_name_mismatch(
-                    student.get('name', ''),
-                    result.get('name', ''),
-                    raw_entry,
-                    student['row']
-                )
-                if mismatch_msg:
-                    summary['name_mismatches'].append({
-                        "entry_number": raw_entry,
-                        "sheet_name": student['name'],
-                        "ocr_name": result.get('name'),
-                        "row": student['row']
-                    })
-                    final_comments.append(mismatch_msg)
-                
-                # Check for unattempted questions if available
-                # (Assuming 'unattempted_count' is passed in results dict)
-                # Not explicitly requested but good for context if counts are passed.
-                
-                comment_str = "; ".join(final_comments)
-
-                # Prepare updates
-                # Update Score
-                batch_data.append({
-                    "range": f"'{sheet_name}'!{marks_col_letter}{student['row']}",
-                    "values": [[score]]
-                })
-                
-                # Update Comment (only if column exists and we have something to say)
-                if comments_col_letter and comment_str:
-                    batch_data.append({
-                        "range": f"'{sheet_name}'!{comments_col_letter}{student['row']}",
-                        "values": [[comment_str]]
-                    })
-                
             else:
-                summary['not_found_in_results'].append(raw_entry)
+                # 2. Fallback: Try Name Match
+                # Iterate through all results to find a name match
+                found_by_name = None
+                sheet_name_cleaned = student.get('name', '').strip().lower()
+                
+                if sheet_name_cleaned:
+                    for r in results:
+                        ocr_name_cleaned = r.get('name', '').strip().lower()
+                        # Simple inclusion check or intersection
+                        if not ocr_name_cleaned: continue
+                        
+                        # Use existing name check logic? Or simplified?
+                        # If exact match or significant overlap
+                        if sheet_name_cleaned == ocr_name_cleaned:
+                            found_by_name = r
+                            break
+                        
+                        # Split parts
+                        s_parts = set(sheet_name_cleaned.split())
+                        o_parts = set(ocr_name_cleaned.split())
+                        intersection = s_parts.intersection(o_parts)
+                        
+                        # If at least 2 significant words match (e.g. "Harsh Modi")
+                        if len(intersection) >= 2:
+                            found_by_name = r
+                            break
+                        # Or if 1 word matches and total words is small, but be careful of "Kumar"
+                        if len(intersection) >= 1 and len(s_parts) == 1 and len(o_parts) == 1:
+                             found_by_name = r
+                             break
+
+                if found_by_name:
+                    result = found_by_name
+                    # mismatch_msg = f"Matched by Name ('{student['name']}') instead of ID ('{raw_entry}' vs OCR '{result.get('entry_number')}')"
+                    # final_comments.append(mismatch_msg)
+                else:
+                    summary['not_found_in_results'].append(raw_entry)
+                    continue
+
+            # Check duplication (if multiple students map to same result? Not detecting here)
+            
+            score = result.get('total_score', 0)
+            details = result.get('details', []) # List of dicts/objects
+            
+            # Compose comment
+            final_comments = []
+            ocr_comment = result.get('comments', '')
+            if ocr_comment:
+                final_comments.append(ocr_comment)
+
+            mismatch_msg = self._check_name_mismatch(
+                student.get('name', ''),
+                result.get('name', ''),
+                raw_entry,
+                student['row']
+            )
+            if mismatch_msg:
+                summary['name_mismatches'].append({
+                    "entry_number": raw_entry,
+                    "sheet_name": student['name'],
+                    "ocr_name": result.get('name'),
+                    "row": student['row']
+                })
+                final_comments.append(mismatch_msg)
+            
+            comment_str = "; ".join(final_comments)
+
+            # 1. Update Total Score
+            batch_data.append({
+                "range": f"'{sheet_name}'!{marks_col_letter}{student['row']}",
+                "values": [[score]]
+            })
+            
+            # 2. Update Comment
+            if comments_col_letter and comment_str:
+                batch_data.append({
+                    "range": f"'{sheet_name}'!{comments_col_letter}{student['row']}",
+                    "values": [[comment_str]]
+                })
+
+            # 3. Update Per-Question Scores
+            q_map = {}
+            if isinstance(details, list):
+                for d in details:
+                    try:
+                        if isinstance(d, dict):
+                            qn = int(d.get('question_number', -1))
+                            q_map[qn] = d
+                        else:
+                            qn = int(d.question_number)
+                            q_map[qn] = d
+                    except (ValueError, TypeError, AttributeError):
+                        continue
+            
+            # DEBUG: Print details for the first matched student
+            if len(matched_normalized) == 1:
+                print(f"🔍 DEBUG: Inspecting first student {raw_entry}")
+                print(f"   Details count: {len(details)}")
+                print(f"   Q_MAP keys (int): {list(q_map.keys())}")
+                print(f"   Question Cols keys (int): {list(question_cols.keys())}")
+                
+            for q_num, col_info in question_cols.items():
+                col_letter = col_info['letter']
+                
+                if q_num in q_map:
+                    q_data = q_map[q_num]
+                    val_to_write = 0
+                    
+                    if isinstance(q_data, dict):
+                        status = q_data.get('result', '')
+                        val = q_data.get('score', 0)
+                    else:
+                        status = getattr(q_data, 'result', '')
+                        val = getattr(q_data, 'score', 0)
+                    
+                    if status in ['multiple', 'unattempted', 'incorrect']:
+                        val_to_write = 0
+                    elif status == 'correct':
+                        val_to_write = val # Should be full marks
+                    else:
+                         # Default fallback
+                        val_to_write = val
+                    
+                    # Add to batch
+                    batch_data.append({
+                        "range": f"'{sheet_name}'!{col_letter}{student['row']}",
+                        "values": [[val_to_write]]
+                    })
+                else:
+                    # If the student didn't have data for this question (e.g. absent/error or not in answer key?)
+                    # We can choose to write 0 or leave blank.
+                    pass
 
         # Execute batch update
         if batch_data:
             try:
-                body = {
-                    "valueInputOption": "RAW",
-                    "data": batch_data,
-                }
-                self.service.spreadsheets().values().batchUpdate(
-                    spreadsheetId=spreadsheet_id,
-                    body=body
-                ).execute()
-                summary['updated'] = len(matched_normalized) # Count students, not cells
-                print(f"✅ Updated marks/comments for {len(matched_normalized)} students.")
+                # Split huge batches if necessary (Google limit is around 50k calls?? No, payload size)
+                # Chunking 1000 updates at a time is safer
+                chunk_size = 500
+                for i in range(0, len(batch_data), chunk_size):
+                    chunk = batch_data[i:i + chunk_size]
+                    body = {
+                        "valueInputOption": "RAW",
+                        "data": chunk,
+                    }
+                    self.service.spreadsheets().values().batchUpdate(
+                        spreadsheetId=spreadsheet_id,
+                        body=body
+                    ).execute()
+                
+                summary['updated'] = len(matched_normalized)
+                print(f"✅ Updated {len(batch_data)} cells for {len(matched_normalized)} students.")
             except Exception as e:
                 summary['errors'].append(f"Batch update failed: {str(e)}")
                 print(f"❌ Batch update failed: {e}")
@@ -417,37 +445,73 @@ class SheetsService:
     #  Helpers
     # ──────────────────────────────────────
 
+    QUESTION_COLUMN_PATTERN = re.compile(
+        r'^(?:q|ques|question)?[\s\.\-\_]*(\d+)$', 
+        re.IGNORECASE
+    )
+
     def _detect_columns(self, headers: List[str]) -> Dict:
         """
-        Auto-detect which columns contain entry_number, name, marks, and comments.
+        Auto-detect columns including Question columns (1, Q1, etc.)
         """
-        columns = {}
-        normalized_headers = [h.strip().lower() for h in headers]
+        columns = {'questions': {}}
+        
+        # Helper to normalize
+        def norm(h): return h.strip().lower()
 
-        for idx, header in enumerate(normalized_headers):
+        for idx, header_raw in enumerate(headers):
+            h = norm(header_raw)
             col_letter = self._index_to_letter(idx)
-
-            if not columns.get('entry_number'):
-                if header in self.ENTRY_NUMBER_ALIASES or any(alias in header for alias in self.ENTRY_NUMBER_ALIASES):
-                    columns['entry_number'] = {"index": idx, "letter": col_letter, "header": headers[idx]}
-
-            if not columns.get('name'):
-                if header in self.NAME_ALIASES or any(alias in header for alias in self.NAME_ALIASES):
-                    columns['name'] = {"index": idx, "letter": col_letter, "header": headers[idx]}
-
-            if not columns.get('marks'):
-                if header in self.MARKS_ALIASES or any(alias in header for alias in self.MARKS_ALIASES):
-                    columns['marks'] = {"index": idx, "letter": col_letter, "header": headers[idx]}
             
-            if not columns.get('comments'):
-                if header in self.COMMENTS_ALIASES or any(alias in header for alias in self.COMMENTS_ALIASES):
-                    columns['comments'] = {"index": idx, "letter": col_letter, "header": headers[idx]}
+            # 1. Entry Number (High Priority)
+            if not columns.get('entry_number'):
+                if h in self.ENTRY_NUMBER_ALIASES:
+                    columns['entry_number'] = {"index": idx, "letter": col_letter, "header": header_raw}
+                    continue
 
+            # 2. Student Name
+            if not columns.get('name'):
+                 if h in self.NAME_ALIASES:
+                    columns['name'] = {"index": idx, "letter": col_letter, "header": header_raw}
+                    continue
+
+            # 3. Marks / Total Score
+            if not columns.get('marks'):
+                 if h in self.MARKS_ALIASES:
+                    columns['marks'] = {"index": idx, "letter": col_letter, "header": header_raw}
+                    continue
+            
+            # 4. Comments
+            if not columns.get('comments'):
+                 if h in self.COMMENTS_ALIASES:
+                    columns['comments'] = {"index": idx, "letter": col_letter, "header": header_raw}
+                    continue
+
+            # 5. Question Columns (Check regex)
+            # Try matching "Q1", "Question 1", "1", etc.
+            m = self.QUESTION_COLUMN_PATTERN.match(h)
+            if m:
+                try:
+                    q_num = int(m.group(1))
+                    # Prevent "1" from being confused if we want constraints, but usually Qs are 1..N
+                    columns['questions'][q_num] = {"index": idx, "letter": col_letter, "header": header_raw}
+                    continue
+                except ValueError:
+                    pass
+            
+            # 6. Fallback: If header is just an integer, treat as question
+            if header_raw.strip().isdigit():
+                 q_num = int(header_raw.strip())
+                 if q_num not in columns['questions']:
+                     columns['questions'][q_num] = {"index": idx, "letter": col_letter, "header": header_raw}
+
+        if columns.get('questions'):
+            print(f"📊 Detected {len(columns['questions'])} question columns: {sorted(list(columns['questions'].keys()))}")
+        
         return columns
 
     @staticmethod
     def _index_to_letter(index: int) -> str:
-        """Convert 0-based column index to spreadsheet column letter (A...Z...AA)."""
         result = ""
         while True:
             result = chr(65 + (index % 26)) + result

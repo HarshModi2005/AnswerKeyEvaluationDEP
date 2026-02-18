@@ -13,30 +13,59 @@ import base64
 import requests
 from typing import Dict, Optional
 from models import AnswerKey, AnswerKeyEntry
-
+from google.oauth2 import service_account
+import google.auth.transport.requests
+import google.auth
 
 class AnswerKeyService:
-    """
-    Extracts and normalizes answer keys from various file formats.
-    
-    Supported formats:
-    - CSV (.csv)
-    - Excel (.xlsx, .xls) 
-    - PDF (.pdf) — via OCR + LLM
-    - Images (.png, .jpg, .jpeg) — via OCR + LLM
-    - Google Sheets — exported as CSV first, then parsed
-    """
-
     def __init__(self):
+        self.project_id = "project-75abf07c-e594-4660-ab7"
+        self.location = "us-central1"
+        self.model_id = "gemini-2.5-flash-lite"
+        self.creds = None
+        
+        # Try finding Service Account credentials
+        creds_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+        if creds_path and os.path.exists(creds_path):
+            try:
+                self.creds = service_account.Credentials.from_service_account_file(
+                    creds_path,
+                    scopes=["https://www.googleapis.com/auth/cloud-platform"]
+                )
+                if hasattr(self.creds, "project_id") and self.creds.project_id:
+                     self.project_id = self.creds.project_id
+            except Exception as e:
+                print(f"⚠️ Failed to load Service Account in AnswerKeyService: {e}")
+
         self.vertex_api_key = os.getenv("VERTEX_AI_API_KEY")
-        if self.vertex_api_key:
-            self.vertex_url = (
+
+        # Construct URL
+        if self.creds:
+             self.vertex_url = (
+                f"https://{self.location}-aiplatform.googleapis.com/v1/"
+                f"projects/{self.project_id}/locations/{self.location}/"
+                f"publishers/google/models/{self.model_id}:streamGenerateContent"
+             )
+        elif self.vertex_api_key:
+             self.vertex_url = (
                 f"https://aiplatform.googleapis.com/v1/publishers/google/models/"
-                f"gemini-2.5-flash-lite:streamGenerateContent?key={self.vertex_api_key}"
-            )
+                f"{self.model_id}:streamGenerateContent?key={self.vertex_api_key}"
+             )
         else:
             self.vertex_url = None
-            print("⚠️  VERTEX_AI_API_KEY not set — OCR-based answer key parsing won't work")
+            print("⚠️  VERTEX_AI_API_KEY not set and no Service Account found — OCR-based answer key parsing won't work")
+
+    def _get_auth_header(self):
+        """Get Authorization header with Bearer token if using Service Account."""
+        if self.creds:
+            try:
+                auth_req = google.auth.transport.requests.Request()
+                self.creds.refresh(auth_req)
+                return {"Authorization": f"Bearer {self.creds.token}", "Content-Type": "application/json"}
+            except Exception as e:
+                print(f"❌ Failed to refresh token: {e}")
+                return {"Content-Type": "application/json"} 
+        return {"Content-Type": "application/json"}
 
     # ──────────────────────────────────────────
     #  Public API
@@ -84,7 +113,45 @@ class AnswerKeyService:
         # Normalize raw dict → AnswerKey model
         answer_key = self._normalize(raw, source_file=os.path.basename(file_path))
         print(f"✅ Answer key extracted: {answer_key.total_questions} questions")
+        
+        # PERSISTENCE: Save to disk automatically
+        self.save_to_disk(answer_key)
+        
         return answer_key
+
+    def save_to_disk(self, answer_key: AnswerKey, filename: str = "current_answer_key.json"):
+        """Save the AnswerKey object to a JSON file."""
+        try:
+            with open(filename, 'w') as f:
+                f.write(answer_key.model_dump_json(indent=2))
+            print(f"💾 Saved answer key to {filename}")
+        except Exception as e:
+            print(f"⚠️ Failed to save answer key to disk: {e}")
+
+    def load_from_disk(self, filename: str = "current_answer_key.json") -> Optional[AnswerKey]:
+        """Load the AnswerKey object from a JSON file."""
+        if not os.path.exists(filename):
+            return None
+        
+        try:
+            with open(filename, 'r') as f:
+                data = json.load(f)
+            
+            # Reconstruct Dictionary with integer keys for answers
+            answers_data = data.get("answers", {})
+            converted_answers = {}
+            for k, v in answers_data.items():
+                converted_answers[int(k)] = AnswerKeyEntry(**v)
+            
+            return AnswerKey(
+                total_questions=data["total_questions"],
+                answers=converted_answers,
+                negative_marking=data.get("negative_marking", 0.0),
+                metadata=data.get("metadata", {})
+            )
+        except Exception as e:
+            print(f"⚠️ Failed to load answer key from disk: {e}")
+            return None
 
     # ──────────────────────────────────────────
     #  Format-Specific Parsers
@@ -297,9 +364,10 @@ class AnswerKeyService:
         }
 
         try:
+            headers = self._get_auth_header()
             response = requests.post(
                 self.vertex_url,
-                headers={"Content-Type": "application/json"},
+                headers=headers,
                 json=payload,
                 timeout=60
             )

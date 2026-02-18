@@ -19,6 +19,8 @@ venv/
 credentials.json
 *.json.bak
 service-account*.json
+vertex_key.json
+backend/vertex_key.json
 
 # Node / Frontend
 node_modules/

@@ -19,6 +19,7 @@ class Database:
                      (submission_id TEXT PRIMARY KEY, score REAL, feedback TEXT, details TEXT)''')
         conn.commit()
         conn.close()
+        print(f"✅ Database initialized at {self.db_path} with tables: students, submissions, results")
 
     def add_student(self, student: Student):
         conn = sqlite3.connect(self.db_path)

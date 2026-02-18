@@ -60,6 +60,10 @@ class EvaluationService:
         negative_deduction = 0.0
         details = []
 
+        # DEBUG
+        print(f"DEBUG: Student Ans Keys: {list(student_ans.keys())}")
+        print(f"DEBUG: Answer Key Keys: {list(answer_key.answers.keys())}")
+        
         # Iterate strictly over answer key questions
         for q_num, key_entry in answer_key.answers.items():
             correct_option = key_entry.correct_option.strip().upper()
@@ -68,6 +72,9 @@ class EvaluationService:
 
             if q_num in student_ans:
                 marked = student_ans[q_num]
+                
+                # DEBUG: Print comparison for ALL questions
+                print(f"🧐 Student [{name}] Q{q_num}: Marked='{marked}' vs Key='{correct_option}' [{'MATCH' if marked == correct_option else 'MISMATCH'}]")
 
                 if marked == "MULTIPLE":
                     # Multiple options marked -> Incorrect
@@ -130,7 +137,7 @@ class EvaluationService:
             unattempted_count=unattempted_count,
             negative_deduction=negative_deduction,
             details=details,
-            comments="; ".join(comments_list)
+            comments="; ".join(comments_list) + f" [DEBUG: S_Keys={list(student_ans.keys())}]"
         )
 
     def __init__(self, api_key: str = None, provider: str = None):
