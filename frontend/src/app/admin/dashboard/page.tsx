@@ -325,11 +325,9 @@ export default function AdminDashboard() {
                                         </span>
                                     </div>
                                     {res.feedback && <p className="text-sm text-gray-600 mt-1">{res.feedback}</p>}
-                                    {res.correct_count !== undefined && (
-                                        <p className="text-xs text-gray-500 mt-1">
-                                            ✅ {res.correct_count} correct · ❌ {res.incorrect_count} incorrect · ⬜ {res.unattempted_count} unattempted
-                                        </p>
-                                    )}
+                                    <p className="text-xs text-gray-500 mt-1">
+                                        {res.correct_count} correct · {res.incorrect_count} incorrect · {res.unattempted_count} unattempted
+                                    </p>
                                     {res.details && (
                                         <details className="mt-2 text-xs text-gray-500 cursor-pointer">
                                             <summary>View Details</summary>
